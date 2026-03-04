@@ -1,0 +1,18 @@
+#Compiled files
+*.exe
+*.out
+*.o
+*.obj
+
+#Debug files
+*.log
+
+#Temporary files
+*.tmp
+
+#VS code settings
+.vscode/
+
+#OS files
+.DS_Store
+Thumbs.db
