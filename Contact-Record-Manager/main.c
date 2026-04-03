@@ -4,7 +4,9 @@
    It stores the contact information in a file named "contact.dat" in the same directory as the program.
    Contact information it stored in binary format for efficient storage and retrieval.
    Both name and phone number are unique for each contact and the program will not allow duplicate entries for these fields.
-   In future i will make it so phone or name will not be unique and there can be multiple contacts with same name or phone number but for now it is unique for each contact.
+   In future i will make it so phone or name will not be unique and 
+   there can be multiple contacts with same name or phone number but for now it is unique for each contact.
+   I have divided the code into different layers with diffrent use.
 */
 
 #include <stdio.h>
@@ -12,6 +14,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#define FILE_NAME "contact.dat"
 #define MAX_LENGTH 50
 #define MAX_LENGTH_PHONE 15
 #define MAX_LENGTH_CONFIRMATION 10
@@ -24,6 +27,17 @@ typedef struct
     char email[MAX_LENGTH];
 } Contact;
 
+typedef struct {
+    Contact *list;
+    int count;
+} ContactManager;
+
+typedef enum {
+    SUCCESS,
+    FILE_ERROR,
+    MEMORY_ERROR,
+} Status;
+
 void input_buffer();
 void to_upper(char *s);
 
@@ -35,8 +49,8 @@ int is_yesorno_response(char *response);
 int is_no_response(char *response);
 
 void print_contact(const Contact *c);
-void input_contact(Contact *c);
-void input_contact_for_editing(Contact *c, const char *old_name, const char *old_phone);
+void input_contact(const ContactManager *mgr, Contact *c);
+void input_contact_for_editing(const ContactManager *mgr, Contact *c, const char *old_name, const char *old_phone);
 
 int is_phone_valid(const char *phone);
 int is_email_valid(const char *email);
@@ -45,25 +59,32 @@ void name_format(char *name);
 void phone_format(char *phone);
 void email_format(char *email);
 
-int find_by_name(const char *name);
-int find_by_phone(const char *phone);
+int realloc_array(Contact **list, const int count);
+int read_from_file(ContactManager *mgr);
+int write_to_file(const ContactManager *mgr);
 
-void view_by_name(const char *name);
-void view_by_phone(const char *phone);
+int find_by_name(const ContactManager *mgr, const char *name);
+int find_by_phone(const ContactManager *mgr, const char *phone);
 
-void edit_by_name(const char *name);
-void edit_by_phone(const char *phone);
+void view_by_name(const ContactManager *mgr, const char *name);
+void view_by_phone(const ContactManager *mgr, const char *phone);
 
-void delete_by_name(const char *name);
-void delete_by_phone(const char *phone);
+void edit_by_name(ContactManager *mgr, const char *name);
+void edit_by_phone(ContactManager *mgr, const char *phone);
+
+void delete_by_name(ContactManager *mgr, const char *name);
+void delete_by_phone(ContactManager *mgr, const char *phone);
+
+void edit_index(ContactManager *mgr, int index);
+void delete_index(ContactManager *mgr, int index);
 
 int menu();
-void add_contact();
-void view_contacts();
-void edit_contact();
-void delete_contact();
-void see_all_contacts();
-void delete_all_contacts();
+void add_contact(ContactManager *mgr);
+void view_contacts(ContactManager *mgr);
+void edit_contact(ContactManager *mgr);
+void delete_contact(ContactManager *mgr);
+void see_all_contacts(ContactManager *mgr);
+void delete_all_contacts(ContactManager *mgr);
 
 int main(void)
 {
@@ -71,27 +92,34 @@ int main(void)
 
     int choice = menu();
 
+    ContactManager cmgr = {NULL, 0};
+    Status s = read_from_file(&cmgr);
+    if(s == FILE_ERROR || s == MEMORY_ERROR){
+        printf("Error loading contact.\n");
+        return 0;
+    }
+
     while (choice != MAX_FUNCTION)
     {
         switch (choice)
         {
         case 1:
-            add_contact();
+            add_contact(&cmgr);
             break;
         case 2:
-            view_contacts();
+            view_contacts(&cmgr);
             break;
         case 3:
-            edit_contact();
+            edit_contact(&cmgr);
             break;
         case 4:
-            delete_contact();
+            delete_contact(&cmgr);
             break;
         case 5:
-            see_all_contacts();
+            see_all_contacts(&cmgr);
             break;
         case 6:
-            delete_all_contacts();
+            delete_all_contacts(&cmgr);
             break;
         }
 
@@ -99,7 +127,13 @@ int main(void)
         choice = menu();
     }
 
+    s = write_to_file(&cmgr);
+    if(s == FILE_ERROR || s == MEMORY_ERROR){
+        printf("Error loading contact.\n");
+    }
+
     printf("Thank you for using our platform.\n");
+    free(cmgr.list);
 
     return 0;
 }
@@ -202,14 +236,14 @@ void print_contact(const Contact *c)
     printf("\n");
 }
 
-void input_contact(Contact *c)
+void input_contact(const ContactManager *mgr, Contact *c)
 {
     while (1)
     {
         input_string("Enter the name: ", c->name, MAX_LENGTH);
         name_format(c->name);
 
-        if (find_by_name(c->name))
+        if (find_by_name(mgr, c->name) != -1)
         {
             printf("Name already used for another contact.\n");
         }
@@ -228,7 +262,7 @@ void input_contact(Contact *c)
         {
             printf("Invalid input. Please enter correct number.\n");
         }
-        else if (find_by_phone(c->phone))
+        else if (find_by_phone(mgr, c->phone) != -1)
         {
             printf("Phone number already used for another contact.\n");
         }
@@ -254,14 +288,14 @@ void input_contact(Contact *c)
     }
 }
 
-void input_contact_for_editing(Contact *c, const char *old_name, const char *old_phone)
+void input_contact_for_editing(const ContactManager *mgr, Contact *c, const char *old_name, const char *old_phone)
 {
     while (1)
     {
         input_string("Enter the name: ", c->name, MAX_LENGTH);
         name_format(c->name);
 
-        if (strcmp(c->name, old_name) != 0 && find_by_name(c->name))
+        if (strcmp(c->name, old_name) != 0 && find_by_name(mgr, c->name) != -1)
         {
             printf("Name already used for another contact.\n");
         }
@@ -280,7 +314,7 @@ void input_contact_for_editing(Contact *c, const char *old_name, const char *old
         {
             printf("Invalid input. Please enter correct number.\n");
         }
-        else if (strcmp(c->phone, old_phone) != 0 && find_by_phone(c->phone))
+        else if (strcmp(c->phone, old_phone) != 0 && find_by_phone(mgr, c->phone) != -1)
         {
             printf("Phone number already used for another contact.\n");
         }
@@ -399,227 +433,191 @@ void email_format(char *email)
     }
 }
 
-int find_by_name(const char *name)
+int realloc_array(Contact **list, const int count)
 {
-    FILE *cI = fopen("contact.dat", "rb");
-    if (cI == NULL)
-        return 0;
-
-    Contact c;
-
-    while (fread(&c, sizeof(c), 1, cI) == 1)
-    {
-        if (!strcmp(c.name, name))
-        {
-            fclose(cI);
-            return 1;
-        }
+    if(count == 0){
+        free(*list);
+        *list = NULL;
+        return SUCCESS;
+    }
+    Contact *arr = realloc(*list, count * sizeof(Contact));
+    if(arr == NULL){
+        return MEMORY_ERROR;
     }
 
-    fclose(cI);
-    return 0;
+    *list = arr;
+    return SUCCESS;
 }
 
-int find_by_phone(const char *phone)
+int read_from_file(ContactManager *mgr)
 {
-    FILE *cI = fopen("contact.dat", "rb");
-    if (cI == NULL)
-        return 0;
-
-    Contact c;
-
-    while (fread(&c, sizeof(c), 1, cI) == 1)
-    {
-        if (!strcmp(c.phone, phone))
-        {
-            fclose(cI);
-            return 1;
-        }
+    FILE *fp = fopen(FILE_NAME, "rb");
+    if(fp == NULL){
+        mgr->count = 0;
+        mgr->list = NULL;
+        return SUCCESS;
     }
 
-    fclose(cI);
-    return 0;
+    if(fread(&mgr->count, sizeof(int), 1, fp) != 1){
+        fclose(fp);
+        mgr->count = 0;
+        mgr->list = NULL;
+        return FILE_ERROR;
+    }
+
+    if(mgr->count <= 0){
+        fclose(fp);
+        mgr->count = 0;
+        mgr->list = NULL;
+        return SUCCESS;
+    }
+
+    mgr->list = malloc(mgr->count * sizeof(Contact));
+    if(mgr->list == NULL){
+        fclose(fp);
+        mgr->count = 0;
+        return MEMORY_ERROR;
+    }
+
+    if(fread(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count){
+        fclose(fp);
+        mgr->count = 0;
+        mgr->list = NULL;
+        return FILE_ERROR;
+    }
+    
+    fclose(fp);
+    return SUCCESS;
 }
 
-void view_by_name(const char *name)
+int write_to_file(const ContactManager *mgr)
 {
-    FILE *contactInfo = fopen("contact.dat", "rb");
-
-    if (contactInfo == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
-        return;
+    FILE *fp = fopen(FILE_NAME, "wb");
+    if(fp == NULL){
+        return FILE_ERROR;
     }
 
-    Contact contact;
-    int found = 0;
+    if(fwrite(&mgr->count, sizeof(int), 1, fp) != 1){
+        fclose(fp);
+        return FILE_ERROR;
+    }
 
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
+    if(fwrite(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count){
+        fclose(fp);
+        return FILE_ERROR;
+    }
+
+    fclose(fp);
+    return SUCCESS;
+}
+
+int find_by_name(const ContactManager *mgr, const char *name)
+{
+    for (int i = 0; i < mgr->count; i++)
     {
-        if (!strcmp(name, contact.name))
+        if (!strcmp(mgr->list[i].name, name))
         {
-            print_contact(&contact);
-            found = 1;
-            break;
+            return i;
         }
     }
 
-    if (found == 0)
+    return -1;
+}
+
+int find_by_phone(const ContactManager *mgr, const char *phone)
+{
+    for (int i = 0; i < mgr->count; i++)
+    {
+        if (!strcmp(mgr->list[i].phone, phone))
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void view_by_name(const ContactManager *mgr, const char *name)
+{
+    int found = find_by_name(mgr, name);
+
+    if (found == -1)
     {
         printf("Contact not found.\n");
-    }
-
-    fclose(contactInfo);
-    contactInfo = NULL;
-}
-
-void view_by_phone(const char *phone)
-{
-    FILE *contactInfo = fopen("contact.dat", "rb");
-
-    if (contactInfo == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
         return;
     }
+    print_contact(&mgr->list[found]);
+}
 
-    Contact contact;
-    int found = 0;
+void view_by_phone(const ContactManager *mgr, const char *phone)
+{
+    int found = find_by_phone(mgr, phone);
 
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(phone, contact.phone))
-        {
-            print_contact(&contact);
-            found = 1;
-            break;
-        }
-    }
-
-    if (found == 0)
+    if (found == -1)
     {
         printf("Contact not found.\n");
+        return;
     }
-
-    fclose(contactInfo);
-    contactInfo = NULL;
+    print_contact(&mgr->list[found]);
 }
 
-void edit_by_name(const char *name)
+void edit_by_name(ContactManager *mgr, const char *name)
 {
-    FILE *contactInfo = fopen("contact.dat", "rb");
-    FILE *temp = fopen("temp.dat", "wb");
-
-    if (contactInfo == NULL || temp == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
-        return;
-    }
-
     printf("Contact to be edited.\n");
-    if (!find_by_name(name))
+    int found = find_by_name(mgr, name);
+    if (found == -1)
     {
-        printf("Editing the contact failed.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
+        printf("Contact not found.\n");
         return;
     }
-    view_by_name(name);
-
-    Contact originalContact;
-    while (fread(&originalContact, sizeof(originalContact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(name, originalContact.name))
-        {
-            rewind(contactInfo);
-            break;
-        }
-    }
-
-    Contact contactEdited = originalContact;
-    printf("Enter the edited contact data.\n");
-    input_contact_for_editing(&contactEdited, originalContact.name, originalContact.phone);
-
-    printf("Edited contact data.\n");
-    print_contact(&contactEdited);
-
-    printf("Do you want to save this edited contact data?\n");
-    printf("Answer in yes(y) or no(n): ");
-    if (!get_confirmation())
-    {
-        printf("Edited contact data will not be saved and previous data will be kept saved as it is upon your choice.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
-        return;
-    }
-
-    Contact contact;
-
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(name, contact.name))
-        {
-            fwrite(&contactEdited, sizeof(contactEdited), 1, temp);
-        }
-        else
-        {
-            fwrite(&contact, sizeof(contact), 1, temp);
-        }
-    }
-
-    printf("Contact successfully edited.\n");
-
-    if (remove("contact.dat") != 0 || rename("temp.dat", "contact.dat") != 0)
-    {
-        printf("Error occurred while saving the edited contact data.\n");
-    }
-
-    fclose(contactInfo);
-    fclose(temp);
-    contactInfo = NULL;
-    temp = NULL;
+    
+    edit_index(mgr, found);
 }
 
-void edit_by_phone(const char *phone)
+void edit_by_phone(ContactManager *mgr, const char *phone)
 {
-    FILE *contactInfo = fopen("contact.dat", "rb");
-    FILE *temp = fopen("temp.dat", "wb");
-
-    if (contactInfo == NULL || temp == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
-        return;
-    }
-
     printf("Contact to be edited.\n");
-    if (!find_by_phone(phone))
+    int found = find_by_phone(mgr, phone);
+    if (found == -1)
     {
-        printf("Editing the contact failed.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
+        printf("Contact not found.\n");
         return;
     }
-    view_by_phone(phone);
+    
+    edit_index(mgr, found);
+}
 
-    Contact originalContact;
-    while (fread(&originalContact, sizeof(originalContact), 1, contactInfo) == 1)
+void delete_by_name(ContactManager *mgr, const char *name)
+{
+    int found = find_by_name(mgr, name);
+    if (found == -1)
     {
-        if (!strcmp(phone, originalContact.phone))
-        {
-            rewind(contactInfo);
-            break;
-        }
+        printf("Contact not found.\n");
+        return;
     }
+    
+    delete_index(mgr, found);
+}
 
-    Contact contactEdited = originalContact;
+void delete_by_phone(ContactManager *mgr, const char *phone)
+{
+    int found = find_by_phone(mgr, phone);
+    if (found == -1)
+    {
+        printf("Contact not found.\n");
+        return;
+    }
+    
+    delete_index(mgr, found);
+}
+
+void edit_index(ContactManager *mgr, int index)
+{
+    print_contact(&mgr->list[index]);
+
+    Contact contactEdited = mgr->list[index];
     printf("Enter the edited contact data.\n");
-    input_contact_for_editing(&contactEdited, originalContact.name, originalContact.phone);
+    input_contact_for_editing(mgr, &contactEdited, mgr->list[index].name, mgr->list[index].phone);
 
     printf("Edited contact data.\n");
     print_contact(&contactEdited);
@@ -628,164 +626,32 @@ void edit_by_phone(const char *phone)
     if (!get_confirmation())
     {
         printf("Edited contact data will not be saved and previous data will be kept saved as it is upon your choice.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
         return;
     }
 
-    Contact contact;
-
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(phone, contact.phone))
-        {
-            fwrite(&contactEdited, sizeof(contactEdited), 1, temp);
-        }
-        else
-        {
-            fwrite(&contact, sizeof(contact), 1, temp);
-        }
-    }
-
-    printf("Contact successfully edited.\n");
-
-    if (remove("contact.dat") != 0 || rename("temp.dat", "contact.dat") != 0)
-    {
-        printf("Error occurred while saving the edited contact data.\n");
-    }
-
-    fclose(contactInfo);
-    fclose(temp);
-    contactInfo = NULL;
-    temp = NULL;
+    mgr->list[index] = contactEdited;
+    printf("Edited contact successfully.\n");
 }
 
-void delete_by_name(const char *name)
+void delete_index(ContactManager *mgr, int index)
 {
-    FILE *contactInfo = fopen("contact.dat", "rb");
-    FILE *temp = fopen("temp.dat", "wb");
-
-    if (contactInfo == NULL || temp == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
-        return;
-    }
-
-    if (!find_by_name(name))
-    {
-        printf("Deleting the contact failed.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
-        return;
-    }
-    view_by_name(name);
+    print_contact(&mgr->list[index]);
 
     printf("Do you want to delete this contact permanently?\n");
     printf("Answer in yes(y) or no(n): ");
     if (!get_confirmation())
     {
         printf("Contact data will be NOT deleted as upon your choice.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
         return;
     }
 
-    Contact contact;
-
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(name, contact.name))
-        {
-            continue;
-        }
-        else
-        {
-            fwrite(&contact, sizeof(contact), 1, temp);
-        }
+    for(int i = index; i < mgr->count - 1; i++){
+        mgr->list[i] = mgr->list[i + 1];
     }
 
-    if (remove("contact.dat") != 0 || rename("temp.dat", "contact.dat") != 0)
-    {
-        printf("Error occurred while saving the edited contact data.\n");
-    }
-    else
-    {
-        printf("Contact successfully deleted.\n");
-    }
-
-    fclose(contactInfo);
-    contactInfo = NULL;
-    fclose(temp);
-    temp = NULL;
-}
-
-void delete_by_phone(const char *phone)
-{
-    FILE *contactInfo = fopen("contact.dat", "rb");
-    FILE *temp = fopen("temp.dat", "wb");
-
-    if (contactInfo == NULL || temp == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
-        return;
-    }
-
-    if (!find_by_phone(phone))
-    {
-        printf("Deleting the contact failed.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
-        return;
-    }
-    view_by_phone(phone);
-
-    printf("Do you want to delete this contact permanently?\n");
-    printf("Answer in yes(y) or no(n): ");
-    if (!get_confirmation())
-    {
-        printf("Contact data will be NOT deleted as upon your choice.\n");
-        fclose(contactInfo);
-        fclose(temp);
-        contactInfo = NULL;
-        temp = NULL;
-        return;
-    }
-
-    Contact contact;
-
-    while (fread(&contact, sizeof(contact), 1, contactInfo) == 1)
-    {
-        if (!strcmp(phone, contact.phone))
-        {
-            continue;
-        }
-        else
-        {
-            fwrite(&contact, sizeof(contact), 1, temp);
-        }
-    }
-
-    if (remove("contact.dat") != 0 || rename("temp.dat", "contact.dat") != 0)
-    {
-        printf("Error occurred while saving the edited contact data.\n");
-    }
-    else
-    {
-        printf("Contact successfully deleted.\n");
-    }
-
-    fclose(contactInfo);
-    contactInfo = NULL;
-    fclose(temp);
-    temp = NULL;
+    realloc_array(&mgr->list, mgr->count - 1);
+    mgr->count--;
+    printf("Contact successfully deleted.\n");
 }
 
 int menu()
@@ -802,44 +668,38 @@ int menu()
     return input_int("Enter your choice: ", 1, MAX_FUNCTION);
 }
 
-void add_contact()
+void add_contact(ContactManager *mgr)
 {
-    FILE *contactInfo = fopen("contact.dat", "ab");
-
-    if (contactInfo == NULL)
-    {
-        printf("Failed to open the file.\n");
-        return;
-    }
-
-    Contact contact;
-    input_contact(&contact);
+    Contact c;
+    input_contact(mgr, &c);
 
     printf("Contact to be saved is: \n");
-    print_contact(&contact);
+    print_contact(&c);
     printf("Do you want to save this contact?\n");
     printf("Answer in yes(y) or no(n): ");
     if (!get_confirmation())
     {
-        fclose(contactInfo);
-        contactInfo = NULL;
+        printf("Contact data will not be saved as per your choice.\n");
         return;
     }
 
-    if (!fwrite(&contact, sizeof(contact), 1, contactInfo))
-    {
-        printf("Error facing when inputting data into the file.\n");
-        fclose(contactInfo);
-        contactInfo = NULL;
+    Status s = realloc_array(&mgr->list, mgr->count + 1);
+    if(s == MEMORY_ERROR){
+        printf("Error saving contact.\n");
         return;
     }
 
-    fclose(contactInfo);
-    contactInfo = NULL;
+    mgr->list[mgr->count] = c;
+    mgr->count++;
 }
 
-void view_contacts()
+void view_contacts(ContactManager *mgr)
 {
+    if(mgr->count == 0){
+        printf("No contact data stored yet.\n");
+        return;
+    }
+
     printf("How would you like to view the contact?\n");
     printf("1. With name.\n");
     printf("2. With phone number.\n");
@@ -852,19 +712,24 @@ void view_contacts()
         char name[MAX_LENGTH];
         input_string("Enter the name: ", name, MAX_LENGTH);
         name_format(name);
-        view_by_name(name);
+        view_by_name(mgr, name);
         break;
     case 2:
         char phone[MAX_LENGTH_PHONE];
         input_string("Enter the phone number: ", phone, MAX_LENGTH_PHONE);
         phone_format(phone);
-        view_by_phone(phone);
+        view_by_phone(mgr, phone);
         break;
     }
 }
 
-void edit_contact()
+void edit_contact(ContactManager *mgr)
 {
+    if(mgr->count == 0){
+        printf("No contact data stored yet.\n");
+        return;
+    }
+
     printf("How would you like to edit the contact?\n");
     printf("1. With name.\n");
     printf("2. With phone number.\n");
@@ -877,20 +742,25 @@ void edit_contact()
         char name[MAX_LENGTH];
         input_string("Enter the name: ", name, MAX_LENGTH);
         name_format(name);
-        edit_by_name(name);
+        edit_by_name(mgr, name);
         break;
 
     case 2:
         char phone[MAX_LENGTH_PHONE];
         input_string("Enter the phone number: ", phone, MAX_LENGTH_PHONE);
         phone_format(phone);
-        edit_by_phone(phone);
+        edit_by_phone(mgr, phone);
         break;
     }
 }
 
-void delete_contact()
+void delete_contact(ContactManager *mgr)
 {
+    if(mgr->count == 0){
+        printf("No contact data stored yet.\n");
+        return;
+    }
+
     printf("How would you like to delete the contact?\n");
     printf("1. With name.\n");
     printf("2. With phone number.\n");
@@ -903,47 +773,37 @@ void delete_contact()
         char name[MAX_LENGTH];
         input_string("Enter the name: ", name, MAX_LENGTH);
         name_format(name);
-        delete_by_name(name);
+        delete_by_name(mgr, name);
         break;
     case 2:
         char phone[MAX_LENGTH_PHONE];
         input_string("Enter the phone number: ", phone, MAX_LENGTH_PHONE);
         phone_format(phone);
-        delete_by_phone(phone);
+        delete_by_phone(mgr, phone);
         break;
     }
 }
 
-void see_all_contacts()
+void see_all_contacts(ContactManager *mgr)
 {
-    FILE *contactInfo = fopen("contact.dat", "rb");
-
-    if (contactInfo == NULL)
-    {
-        printf("Failed to open the file. Try next time.\n");
+    if(mgr->count == 0){
+        printf("No contact data stored yet.\n");
         return;
     }
 
-    Contact contact;
-    int found = 0;
-
-    while (fread(&contact, sizeof(contact), 1, contactInfo))
+    for (int i = 0; i < mgr->count; i++)
     {
-        print_contact(&contact);
-        found = 1;
+        print_contact(&mgr->list[i]);
     }
-
-    if(found == 0)
-    {
-        printf("No contacts found.\n");
-    }
-
-    fclose(contactInfo);
-    contactInfo = NULL;
 }
 
-void delete_all_contacts()
+void delete_all_contacts(ContactManager *mgr)
 {
+    if(mgr->count == 0){
+        printf("No contact data stored yet.\n");
+        return;
+    }
+
     printf("Do you want to delete all your contacts permanently?\n");
     printf("Answer in yes(y) or no(n): ");
     if (!get_confirmation())
@@ -951,13 +811,9 @@ void delete_all_contacts()
         printf("Contact data will be NOT be deleted as upon your choice.\n");
         return;
     }
-
-    if (remove("contact.dat") != 0)
-    {
-        printf("Error occurred while deleting the contact data.\n");
-    }
-    else
-    {
-        printf("All contacts successfully deleted.\n");
-    }
+    
+    printf("All contacts successfully deleted.\n");
+    free(mgr->list);
+    mgr->count = 0;
+    mgr->list = NULL;
 }

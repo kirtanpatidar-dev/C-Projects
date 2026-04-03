@@ -19,6 +19,7 @@ add, view, update and delete student record using struct and file handling
 - Structures in C
 - Input validation
 - Modular functions
+- Layers Structure
 
 # Installation ⚙️
 
