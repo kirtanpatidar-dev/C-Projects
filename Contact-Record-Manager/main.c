@@ -4,7 +4,7 @@
    It stores the contact information in a file named "contact.dat" in the same directory as the program.
    Contact information it stored in binary format for efficient storage and retrieval.
    Both name and phone number are unique for each contact and the program will not allow duplicate entries for these fields.
-   In future i will make it so phone or name will not be unique and 
+   In future i will make it so phone or name will not be unique and
    there can be multiple contacts with same name or phone number but for now it is unique for each contact.
    I have divided the code into different layers with diffrent use.
 */
@@ -13,12 +13,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
+#include <limits.h>
 
 #define FILE_NAME "contact.dat"
+#define ERROR_LOG "error_log.txt"
 #define MAX_LENGTH 50
 #define MAX_LENGTH_PHONE 15
 #define MAX_LENGTH_CONFIRMATION 10
-#define MAX_FUNCTION 7
+#define MENU_EXIT 7
 
 typedef struct
 {
@@ -27,12 +30,15 @@ typedef struct
     char email[MAX_LENGTH];
 } Contact;
 
-typedef struct {
+typedef struct
+{
     Contact *list;
-    int count;
+    size_t count;
+    size_t capacity;
 } ContactManager;
 
-typedef enum {
+typedef enum
+{
     SUCCESS,
     FILE_ERROR,
     MEMORY_ERROR,
@@ -59,12 +65,13 @@ void name_format(char *name);
 void phone_format(char *phone);
 void email_format(char *email);
 
-int realloc_array(Contact **list, const int count);
+int realloc_array(Contact **list, int *capacity, const int count);
+void log_error(const char *message);
 int read_from_file(ContactManager *mgr);
 int write_to_file(const ContactManager *mgr);
 
-int find_by_name(const ContactManager *mgr, const char *name);
-int find_by_phone(const ContactManager *mgr, const char *phone);
+size_t find_by_name(const ContactManager *mgr, const char *name);
+size_t find_by_phone(const ContactManager *mgr, const char *phone);
 
 void view_by_name(const ContactManager *mgr, const char *name);
 void view_by_phone(const ContactManager *mgr, const char *phone);
@@ -75,8 +82,8 @@ void edit_by_phone(ContactManager *mgr, const char *phone);
 void delete_by_name(ContactManager *mgr, const char *name);
 void delete_by_phone(ContactManager *mgr, const char *phone);
 
-void edit_index(ContactManager *mgr, int index);
-void delete_index(ContactManager *mgr, int index);
+void edit_index(ContactManager *mgr, size_t index);
+void delete_index(ContactManager *mgr, size_t index);
 
 int menu();
 void add_contact(ContactManager *mgr);
@@ -90,17 +97,19 @@ int main(void)
 {
     printf("                    ***CONTACT RECORD MANAGER***\n\n\n");
 
-    int choice = menu();
-
-    ContactManager cmgr = {NULL, 0};
+    ContactManager cmgr = {NULL, 0, 0};
     Status s = read_from_file(&cmgr);
-    if(s == FILE_ERROR || s == MEMORY_ERROR){
+    if (s == FILE_ERROR || s == MEMORY_ERROR)
+    {
         printf("Error loading contact.\n");
         return 0;
     }
 
-    while (choice != MAX_FUNCTION)
+    int choice;
+    do
     {
+        choice = menu();
+
         switch (choice)
         {
         case 1:
@@ -124,12 +133,12 @@ int main(void)
         }
 
         printf("\n\n");
-        choice = menu();
-    }
+    } while (choice != MENU_EXIT);
 
     s = write_to_file(&cmgr);
-    if(s == FILE_ERROR || s == MEMORY_ERROR){
-        printf("Error loading contact.\n");
+    if (s == FILE_ERROR || s == MEMORY_ERROR)
+    {
+        printf("Writing contact failed.\n");
     }
 
     printf("Thank you for using our platform.\n");
@@ -157,7 +166,12 @@ void to_upper(char *s)
 void input_string(const char *prompt, char *s, int length)
 {
     printf("%s", prompt);
-    fgets(s, length, stdin);
+    if (fgets(s, length, stdin) == NULL)
+    {
+        printf("Failed to take the input.\n");
+        s[0] = '\0';
+        return;
+    }
     s[strcspn(s, "\n")] = '\0';
 }
 
@@ -433,59 +447,107 @@ void email_format(char *email)
     }
 }
 
-int realloc_array(Contact **list, const int count)
+int realloc_array(Contact **list, int *capacity, const int count)
 {
-    if(count == 0){
+    if (count == 0)
+    {
         free(*list);
         *list = NULL;
         return SUCCESS;
     }
-    Contact *arr = realloc(*list, count * sizeof(Contact));
-    if(arr == NULL){
-        return MEMORY_ERROR;
+
+    if (*list == NULL)
+    {
+        size_t new_capacity = (count < 10) ? 10 : count + 2000;
+        *list = malloc(new_capacity * sizeof(Contact));
+        if (*list == NULL)
+        {
+            log_error("Failed to allocate memory to list when reallocating when list was null before.\n");
+            return MEMORY_ERROR;
+        }
+        else
+        {
+            return SUCCESS;
+        }
     }
 
-    *list = arr;
+    if (count >= *capacity)
+    {
+        size_t new_capacity = *capacity + 2000;
+        Contact *arr = realloc(*list, new_capacity * sizeof(Contact));
+        if (arr == NULL)
+        {
+            log_error("Failed to Reallocate memory to list.\n");
+            return MEMORY_ERROR;
+        }
+        *list = arr;
+        *capacity = new_capacity;
+    }
+ 
     return SUCCESS;
+}
+
+void log_error(const char *message)
+{
+    FILE *fp = fopen(ERROR_LOG, "a");
+    if (!fp)
+    {
+        return;
+    }
+
+    time_t num = time(NULL);
+    fprintf(fp, "%s - ERROR: %s", ctime(&num), message);
+
+    fclose(fp);
 }
 
 int read_from_file(ContactManager *mgr)
 {
     FILE *fp = fopen(FILE_NAME, "rb");
-    if(fp == NULL){
+    if (fp == NULL)
+    {
         mgr->count = 0;
         mgr->list = NULL;
         return SUCCESS;
     }
 
-    if(fread(&mgr->count, sizeof(int), 1, fp) != 1){
+    if (fread(&mgr->count, sizeof(size_t), 1, fp) != 1)
+    {
         fclose(fp);
         mgr->count = 0;
         mgr->list = NULL;
+        log_error("Failed to read count from the file.\n");
         return FILE_ERROR;
     }
 
-    if(mgr->count <= 0){
+    if (mgr->count > 100000)
+    {
         fclose(fp);
         mgr->count = 0;
         mgr->list = NULL;
         return SUCCESS;
     }
 
-    mgr->list = malloc(mgr->count * sizeof(Contact));
-    if(mgr->list == NULL){
+    mgr->capacity = (mgr->count < 10) ? 10 : mgr->count + 2000;
+    mgr->list = malloc(mgr->capacity * sizeof(Contact));
+    if (mgr->list == NULL)
+    {
         fclose(fp);
         mgr->count = 0;
+        log_error("Failed to allocate memory using malloc to the list.\n");
         return MEMORY_ERROR;
     }
 
-    if(fread(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count){
+    if (fread(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count)
+    {
         fclose(fp);
+        free(mgr->list);
         mgr->count = 0;
         mgr->list = NULL;
+        log_error("Failed the read contact data from the file.\n");
         return FILE_ERROR;
     }
-    
+
     fclose(fp);
     return SUCCESS;
 }
@@ -493,17 +555,23 @@ int read_from_file(ContactManager *mgr)
 int write_to_file(const ContactManager *mgr)
 {
     FILE *fp = fopen(FILE_NAME, "wb");
-    if(fp == NULL){
+    if (fp == NULL)
+    {
+        log_error("Failed to open the file when writing in it.\n");
         return FILE_ERROR;
     }
 
-    if(fwrite(&mgr->count, sizeof(int), 1, fp) != 1){
+    if (fwrite(&mgr->count, sizeof(size_t), 1, fp) != 1)
+    {
         fclose(fp);
+        log_error("Failed to write the count in the file.\n");
         return FILE_ERROR;
     }
 
-    if(fwrite(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count){
+    if (fwrite(mgr->list, sizeof(Contact), mgr->count, fp) != mgr->count)
+    {
         fclose(fp);
+        log_error("Failed to write the contact data into the file.\n");
         return FILE_ERROR;
     }
 
@@ -511,9 +579,9 @@ int write_to_file(const ContactManager *mgr)
     return SUCCESS;
 }
 
-int find_by_name(const ContactManager *mgr, const char *name)
+size_t find_by_name(const ContactManager *mgr, const char *name)
 {
-    for (int i = 0; i < mgr->count; i++)
+    for (size_t i = 0; i < mgr->count; i++)
     {
         if (!strcmp(mgr->list[i].name, name))
         {
@@ -521,12 +589,12 @@ int find_by_name(const ContactManager *mgr, const char *name)
         }
     }
 
-    return -1;
+    return INT_MAX;
 }
 
-int find_by_phone(const ContactManager *mgr, const char *phone)
+size_t find_by_phone(const ContactManager *mgr, const char *phone)
 {
-    for (int i = 0; i < mgr->count; i++)
+    for (size_t i = 0; i < mgr->count; i++)
     {
         if (!strcmp(mgr->list[i].phone, phone))
         {
@@ -534,7 +602,7 @@ int find_by_phone(const ContactManager *mgr, const char *phone)
         }
     }
 
-    return -1;
+    return INT_MAX;
 }
 
 void view_by_name(const ContactManager *mgr, const char *name)
@@ -564,54 +632,54 @@ void view_by_phone(const ContactManager *mgr, const char *phone)
 void edit_by_name(ContactManager *mgr, const char *name)
 {
     printf("Contact to be edited.\n");
-    int found = find_by_name(mgr, name);
-    if (found == -1)
+    size_t found = find_by_name(mgr, name);
+    if (found == INT_MAX)
     {
         printf("Contact not found.\n");
         return;
     }
-    
+
     edit_index(mgr, found);
 }
 
 void edit_by_phone(ContactManager *mgr, const char *phone)
 {
     printf("Contact to be edited.\n");
-    int found = find_by_phone(mgr, phone);
-    if (found == -1)
+    size_t found = find_by_phone(mgr, phone);
+    if (found == INT_MAX)
     {
         printf("Contact not found.\n");
         return;
     }
-    
+
     edit_index(mgr, found);
 }
 
 void delete_by_name(ContactManager *mgr, const char *name)
 {
-    int found = find_by_name(mgr, name);
-    if (found == -1)
+    size_t found = find_by_name(mgr, name);
+    if (found == INT_MAX)
     {
         printf("Contact not found.\n");
         return;
     }
-    
+
     delete_index(mgr, found);
 }
 
 void delete_by_phone(ContactManager *mgr, const char *phone)
 {
-    int found = find_by_phone(mgr, phone);
-    if (found == -1)
+    size_t found = find_by_phone(mgr, phone);
+    if (found == INT_MAX)
     {
         printf("Contact not found.\n");
         return;
     }
-    
+
     delete_index(mgr, found);
 }
 
-void edit_index(ContactManager *mgr, int index)
+void edit_index(ContactManager *mgr, size_t index)
 {
     print_contact(&mgr->list[index]);
 
@@ -633,7 +701,7 @@ void edit_index(ContactManager *mgr, int index)
     printf("Edited contact successfully.\n");
 }
 
-void delete_index(ContactManager *mgr, int index)
+void delete_index(ContactManager *mgr, size_t index)
 {
     print_contact(&mgr->list[index]);
 
@@ -645,11 +713,12 @@ void delete_index(ContactManager *mgr, int index)
         return;
     }
 
-    for(int i = index; i < mgr->count - 1; i++){
+    for (size_t i = index; i < mgr->count - 1; i++)
+    {
         mgr->list[i] = mgr->list[i + 1];
     }
 
-    realloc_array(&mgr->list, mgr->count - 1);
+    realloc_array(&mgr->list, &mgr->capacity, mgr->count - 1);
     mgr->count--;
     printf("Contact successfully deleted.\n");
 }
@@ -665,7 +734,7 @@ int menu()
     printf("6. Delete all contact.\n");
     printf("7. Exit the program.\n");
 
-    return input_int("Enter your choice: ", 1, MAX_FUNCTION);
+    return input_int("Enter your choice: ", 1, MENU_EXIT);
 }
 
 void add_contact(ContactManager *mgr)
@@ -683,8 +752,9 @@ void add_contact(ContactManager *mgr)
         return;
     }
 
-    Status s = realloc_array(&mgr->list, mgr->count + 1);
-    if(s == MEMORY_ERROR){
+    Status s = realloc_array(&mgr->list, &mgr->capacity, mgr->count + 1);
+    if (s == MEMORY_ERROR)
+    {
         printf("Error saving contact.\n");
         return;
     }
@@ -695,7 +765,8 @@ void add_contact(ContactManager *mgr)
 
 void view_contacts(ContactManager *mgr)
 {
-    if(mgr->count == 0){
+    if (mgr->count == 0)
+    {
         printf("No contact data stored yet.\n");
         return;
     }
@@ -725,7 +796,8 @@ void view_contacts(ContactManager *mgr)
 
 void edit_contact(ContactManager *mgr)
 {
-    if(mgr->count == 0){
+    if (mgr->count == 0)
+    {
         printf("No contact data stored yet.\n");
         return;
     }
@@ -756,7 +828,8 @@ void edit_contact(ContactManager *mgr)
 
 void delete_contact(ContactManager *mgr)
 {
-    if(mgr->count == 0){
+    if (mgr->count == 0)
+    {
         printf("No contact data stored yet.\n");
         return;
     }
@@ -786,12 +859,13 @@ void delete_contact(ContactManager *mgr)
 
 void see_all_contacts(ContactManager *mgr)
 {
-    if(mgr->count == 0){
+    if (mgr->count == 0)
+    {
         printf("No contact data stored yet.\n");
         return;
     }
 
-    for (int i = 0; i < mgr->count; i++)
+    for (size_t i = 0; i < mgr->count; i++)
     {
         print_contact(&mgr->list[i]);
     }
@@ -799,7 +873,8 @@ void see_all_contacts(ContactManager *mgr)
 
 void delete_all_contacts(ContactManager *mgr)
 {
-    if(mgr->count == 0){
+    if (mgr->count == 0)
+    {
         printf("No contact data stored yet.\n");
         return;
     }
@@ -811,9 +886,10 @@ void delete_all_contacts(ContactManager *mgr)
         printf("Contact data will be NOT be deleted as upon your choice.\n");
         return;
     }
-    
+
     printf("All contacts successfully deleted.\n");
     free(mgr->list);
     mgr->count = 0;
+    mgr->capacity = 0;
     mgr->list = NULL;
 }
